@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  createDefaultFalProfile,
   createDefaultOpenAIProfile,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_SETTINGS,
@@ -39,7 +38,6 @@ describe('URL settings params', () => {
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'test-key',
       model: 'custom-image-model',
-      apiMode: 'images',
     })
   })
 
@@ -65,7 +63,7 @@ describe('URL settings params', () => {
   })
 
   it('creates an OpenAI profile from legacy params even when fal is active', () => {
-    const falProfile = createDefaultFalProfile({ id: 'fal-active', apiKey: 'fal-key' })
+    const falProfile = ({ id: 'fal-active', apiKey: 'fal-key' })
     const current = normalizeSettings({
       ...DEFAULT_SETTINGS,
       profiles: [falProfile],
@@ -114,7 +112,6 @@ describe('URL settings params', () => {
         apiKey: 'custom-key',
         model: 'custom-model',
         timeout: 300,
-        apiMode: 'images',
         codexCli: false,
         apiProxy: false,
       }],
@@ -170,7 +167,6 @@ describe('URL settings params', () => {
         apiKey: 'custom-key',
         model: 'custom-model',
         timeout: 300,
-        apiMode: 'images',
         codexCli: false,
         apiProxy: false,
       }],
@@ -217,7 +213,6 @@ describe('URL settings params', () => {
           apiKey: 'wrapped-key',
           model: 'wrapped-model',
           timeout: 300,
-          apiMode: 'images',
           codexCli: false,
           apiProxy: false,
         }],

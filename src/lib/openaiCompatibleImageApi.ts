@@ -1,4 +1,4 @@
-import type { ApiProfile, CustomProviderDefinition, CustomProviderPollMapping, CustomProviderResultMapping, CustomProviderSubmitMapping, ImageApiResponse, ResponsesApiResponse, TaskParams } from '../types'
+import type { ApiProfile, CustomProviderDefinition, CustomProviderPollMapping, CustomProviderResultMapping, CustomProviderSubmitMapping, ImageApiResponse, TaskParams } from '../types'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, isApiProxyAvailable, readClientDevProxyConfig } from './devProxy'
 import {
@@ -82,86 +82,6 @@ function createRequestHeaders(profile: ApiProfile): Record<string, string> {
   }
 }
 
-function createResponsesImageTool(
-  params: TaskParams,
-  isEdit: boolean,
-  profile: ApiProfile,
-  maskDataUrl?: string,
-): Record<string, unknown> {
-  const tool: Record<string, unknown> = {
-    type: 'image_generation',
-    action: isEdit ? 'edit' : 'generate',
-    size: params.size,
-    output_format: params.output_format,
-  }
-
-  if (!profile.codexCli) {
-    tool.quality = params.quality
-  }
-
-  if (params.output_format !== 'png' && params.output_compression != null) {
-    tool.output_compression = params.output_compression
-  }
-
-  if (maskDataUrl) {
-    tool.input_image_mask = {
-      image_url: maskDataUrl,
-    }
-  }
-
-  return tool
-}
-
-function createResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
-  const text = `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`
-  if (!inputImageDataUrls.length) return text
-
-  return [
-    {
-      role: 'user',
-      content: [
-        { type: 'input_text', text },
-        ...inputImageDataUrls.map((dataUrl) => ({
-          type: 'input_image',
-          image_url: dataUrl,
-        })),
-      ],
-    },
-  ]
-}
-
-function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime: string): Array<{
-  image: string
-  actualParams?: Partial<TaskParams>
-  revisedPrompt?: string
-}> {
-  const output = payload.output
-  if (!Array.isArray(output) || !output.length) {
-    throw new Error('接口未返回图片数据')
-  }
-
-  const results: Array<{ image: string; actualParams?: Partial<TaskParams>; revisedPrompt?: string }> = []
-
-  for (const item of output) {
-    if (item?.type !== 'image_generation_call') continue
-
-    const result = item.result
-    if (typeof result === 'string' && result.trim()) {
-      results.push({
-        image: normalizeBase64Image(result, fallbackMime),
-        actualParams: mergeActualParams(pickActualParams(item)),
-        revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
-      })
-    }
-  }
-
-  if (!results.length) {
-    throw new Error('接口未返回可用图片数据')
-  }
-
-  return results
-}
-
 async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, signal?: AbortSignal): Promise<CallApiResult> {
   const data = payload.data
   if (!Array.isArray(data) || !data.length) {
@@ -204,9 +124,7 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
     return callCustomHttpImageApi(opts, profile, customProvider)
   }
 
-  return profile.apiMode === 'responses'
-    ? callResponsesImageApi(opts, profile)
-    : callImagesApi(opts, profile)
+  return callImagesApi(opts, profile)
 }
 
 async function callImagesApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
@@ -629,98 +547,5 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, controller.signal)
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
-  }
-}
-
-async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
-  const n = opts.params.n > 0 ? opts.params.n : 1
-  if (n === 1) {
-    return callResponsesImageApiSingle(opts, profile)
-  }
-
-  const promises = Array.from({ length: n }).map(() => callResponsesImageApiSingle(opts, profile))
-  const results = await Promise.allSettled(promises)
-  
-  const successfulResults = results
-    .filter((r): r is PromiseFulfilledResult<CallApiResult> => r.status === 'fulfilled')
-    .map((r) => r.value)
-
-  if (successfulResults.length === 0) {
-    const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
-    if (firstError) throw firstError.reason
-    throw new Error('所有并发请求均失败')
-  }
-
-  const images = successfulResults.flatMap((r) => r.images)
-  const actualParamsList = successfulResults.flatMap((r) =>
-    r.actualParamsList?.length ? r.actualParamsList : r.images.map(() => r.actualParams),
-  )
-  const revisedPrompts = successfulResults.flatMap((r) =>
-    r.revisedPrompts?.length ? r.revisedPrompts : r.images.map(() => undefined),
-  )
-  const actualParams = mergeActualParams(
-    successfulResults[0]?.actualParams ?? {},
-    images.length === opts.params.n ? { n: opts.params.n } : { n: images.length },
-  )
-
-  return { images, actualParams, actualParamsList, revisedPrompts }
-}
-
-async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
-  const { prompt, params, inputImageDataUrls } = opts
-  const mime = MIME_MAP[params.output_format] || 'image/png'
-  const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = profile.apiProxy && isApiProxyAvailable(proxyConfig)
-  const requestHeaders = createRequestHeaders(profile)
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
-
-  try {
-    if (opts.maskDataUrl) {
-      assertMaskEditFileSize('遮罩主图文件', getDataUrlDecodedByteSize(inputImageDataUrls[0] ?? ''))
-      assertMaskEditFileSize('遮罩文件', getDataUrlDecodedByteSize(opts.maskDataUrl))
-    }
-    assertImageInputPayloadSize(
-      inputImageDataUrls.reduce((sum, dataUrl) => sum + getDataUrlEncodedByteSize(dataUrl), 0) +
-        (opts.maskDataUrl ? getDataUrlEncodedByteSize(opts.maskDataUrl) : 0),
-    )
-
-    const body = {
-      model: profile.model,
-      input: createResponsesInput(prompt, inputImageDataUrls),
-      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)],
-      tool_choice: 'required',
-    }
-
-    const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
-      method: 'POST',
-      headers: {
-        ...requestHeaders,
-        'Content-Type': 'application/json',
-      },
-      cache: 'no-store',
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response))
-    }
-
-    const payload = await response.json() as ResponsesApiResponse
-    const imageResults = parseResponsesImageResults(payload, mime)
-    const actualParams = mergeActualParams(
-      imageResults[0]?.actualParams ?? {},
-    )
-    return {
-      images: imageResults.map((result) => result.image),
-      actualParams,
-      actualParamsList: imageResults.map((result) =>
-        mergeActualParams(result.actualParams ?? {}),
-      ),
-      revisedPrompts: imageResults.map((result) => result.revisedPrompt),
-    }
-  } finally {
-    clearTimeout(timeoutId)
   }
 }

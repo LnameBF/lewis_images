@@ -1,7 +1,6 @@
 // ===== 设置 =====
 
-export type ApiMode = 'images' | 'responses'
-export type BuiltInApiProvider = 'openai' | 'fal'
+export type BuiltInApiProvider = 'openai'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 
@@ -60,7 +59,6 @@ export interface ApiProfile {
   apiKey: string
   model: string
   timeout: number
-  apiMode: ApiMode
   codexCli: boolean
   apiProxy: boolean
 }
@@ -71,7 +69,6 @@ export interface AppSettings {
   apiKey: string
   model: string
   timeout: number
-  apiMode: ApiMode
   codexCli: boolean
   apiProxy: boolean
   customProviders: CustomProviderDefinition[]
@@ -227,34 +224,6 @@ export interface ImageApiResponse {
   output_compression?: number
   moderation?: string
   n?: number
-}
-
-export interface ResponsesOutputItem {
-  type?: string
-  result?: string | {
-    b64_json?: string
-    image?: string
-    data?: string
-  }
-  size?: string
-  quality?: string
-  output_format?: string
-  output_compression?: number
-  moderation?: string
-  revised_prompt?: string
-}
-
-export interface ResponsesApiResponse {
-  output?: ResponsesOutputItem[]
-  tools?: Array<{
-    type?: string
-    size?: string
-    quality?: string
-    output_format?: string
-    output_compression?: number
-    moderation?: string
-    n?: number
-  }>
 }
 
 export interface FalImageFile {

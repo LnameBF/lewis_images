@@ -1,0 +1,18 @@
+{
+  "name": "CCTQ Image",
+  "short_name": "CCTQ",
+  "description": "CCTQ Image 图像生成工作台",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#030712",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "./logo.gif",
+      "sizes": "any",
+      "type": "image/gif",
+      "purpose": "any maskable"
+    }
+  ]
+}

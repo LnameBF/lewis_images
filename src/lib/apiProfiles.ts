@@ -11,6 +11,7 @@ import type {
   CustomProviderSubmitMapping,
   CustomProviderTemplate,
 } from '../types'
+import { DEFAULT_ZIP_DOWNLOAD_ROUTES, ZIP_DOWNLOAD_ROUTE_VALUES } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
 
 const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'https://www.cctq.ai/v1'
@@ -322,6 +323,12 @@ function validateImportedProfileRecord(input: unknown) {
   }
 }
 
+function normalizeZipDownloadRoutes(value: unknown) {
+  if (!Array.isArray(value)) return [...DEFAULT_ZIP_DOWNLOAD_ROUTES]
+  const allowed = new Set<string>(ZIP_DOWNLOAD_ROUTE_VALUES)
+  return value.filter((item): item is typeof ZIP_DOWNLOAD_ROUTE_VALUES[number] => typeof item === 'string' && allowed.has(item))
+}
+
 export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSettings {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const customProviders = normalizeCustomProviderDefinitions(record.customProviders)
@@ -354,6 +361,8 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     persistInputOnRestart: typeof record.persistInputOnRestart === 'boolean' ? record.persistInputOnRestart : true,
     reuseTaskApiProfileTemporarily: typeof record.reuseTaskApiProfileTemporarily === 'boolean' ? record.reuseTaskApiProfileTemporarily : false,
     alwaysShowRetryButton: typeof record.alwaysShowRetryButton === 'boolean' ? record.alwaysShowRetryButton : false,
+    enterSubmit: typeof record.enterSubmit === 'boolean' ? record.enterSubmit : false,
+    zipDownloadRoutes: normalizeZipDownloadRoutes(record.zipDownloadRoutes),
     profiles,
     activeProfileId,
   }
@@ -623,4 +632,6 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   persistInputOnRestart: true,
   reuseTaskApiProfileTemporarily: false,
   alwaysShowRetryButton: false,
+  enterSubmit: false,
+  zipDownloadRoutes: DEFAULT_ZIP_DOWNLOAD_ROUTES,
 })

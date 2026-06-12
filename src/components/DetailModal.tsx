@@ -6,7 +6,7 @@ import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
-import { downloadImageIds } from '../lib/downloadImages'
+import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
 import { replaceImageMentionsForApi } from '../lib/promptImageMentions'
 import { CloseIcon, CopyIcon, DownloadIcon, EditIcon, TrashIcon } from './icons'
 
@@ -290,7 +290,10 @@ export default function DetailModal() {
     if (!task?.outputImages?.length) return
 
     try {
-      const result = await downloadImageIds(task.outputImages, `task-${task.id}`)
+      const fileNameBase = `task-${task.id}`
+      const result = settings.zipDownloadRoutes.includes('task-detail-all')
+        ? await downloadImageEntriesAsZip(getImageZipEntries(task.outputImages, fileNameBase), fileNameBase)
+        : await downloadImageIds(task.outputImages, fileNameBase)
       if (result.successCount === 0) {
         showToast('下载失败', 'error')
       } else if (result.failCount > 0) {

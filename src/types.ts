@@ -3,6 +3,12 @@
 export type BuiltInApiProvider = 'openai'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
+export const ZIP_DOWNLOAD_ROUTE_VALUES = [
+  'task-selection',
+  'task-detail-all',
+] as const
+export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
+export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection']
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
 export type CustomProviderContentType = 'json' | 'multipart'
@@ -76,6 +82,8 @@ export interface AppSettings {
   persistInputOnRestart: boolean
   reuseTaskApiProfileTemporarily: boolean
   alwaysShowRetryButton: boolean
+  enterSubmit: boolean
+  zipDownloadRoutes: ZipDownloadRoute[]
   profiles: ApiProfile[]
   activeProfileId: string
 }

@@ -198,6 +198,16 @@ describe('reused task API profile', () => {
     expect(resolved?.id).toBe(customProfile.id)
   })
 
+  it('does not resolve a task API profile by stored name or model', () => {
+    const resolved = getTaskApiProfile(useStore.getState().settings, task({
+      apiProvider: 'fal',
+      apiProfileName: falProfile.name,
+      apiModel: falProfile.model,
+    }))
+
+    expect(resolved).toBeNull()
+  })
+
   it('reuses the task API profile temporarily without switching the active profile', async () => {
     await reuseConfig(task({
       apiProvider: customProvider.id,

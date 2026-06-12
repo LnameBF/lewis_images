@@ -14,10 +14,12 @@ import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
+import { useGlobalClickSuppression } from './lib/clickSuppression'
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   useDockerApiUrlMigrationNotice()
+  useGlobalClickSuppression()
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)

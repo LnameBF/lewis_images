@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useStore, addImageFromUrl, ensureImageCached } from '../store'
 import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 
 export default function ImageContextMenu() {
@@ -54,6 +55,7 @@ export default function ImageContextMenu() {
       if (e.target instanceof Element && e.target.closest('[data-lightbox-root]')) {
         window.dispatchEvent(new Event('image-context-menu-dismiss-lightbox-click'))
       }
+      if (e.type === 'mousedown' || e.type === 'touchstart') suppressGlobalClicks()
       setMenuInfo(null)
     }
     window.addEventListener('mousedown', close, { capture: true })
@@ -108,7 +110,7 @@ export default function ImageContextMenu() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      showToast('开始下载', 'success')
+      showToast('下载成功', 'success')
     } catch (err) {
       console.error(err)
       showToast('下载失败', 'error')

@@ -11,6 +11,7 @@ import type {
 } from './types'
 import { DEFAULT_PARAMS } from './types'
 import { DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
+import { replaceImageMentionsForApi } from './lib/promptImageMentions'
 import {
   CURRENT_THUMBNAIL_VERSION,
   getAllTasks,
@@ -29,6 +30,7 @@ import {
   storeImage,
 } from './lib/db'
 import { callImageApi } from './lib/api'
+import { getApiErrorResponseSnapshot } from './lib/imageApiShared'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
@@ -628,6 +630,25 @@ function scheduleOpenAIWatchdog(taskId: string, timeoutSeconds: number) {
   openAIWatchdogTimers.set(taskId, timer)
 }
 
+export function taskHasOutputErrors(task: Pick<TaskRecord, 'outputErrors'>) {
+  return Boolean(task.outputErrors?.length)
+}
+
+export function taskMatchesFilterStatus(task: TaskRecord, filterStatus: AppState['filterStatus']) {
+  if (filterStatus === 'all') return true
+  if (filterStatus === 'error') return task.status === 'error' || taskHasOutputErrors(task)
+  return task.status === filterStatus
+}
+
+export function taskMatchesSearchQuery(task: TaskRecord, query: string) {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const prompt = (task.prompt || '').toLowerCase()
+  const paramStr = JSON.stringify(task.params).toLowerCase()
+  const errorStr = [task.error, ...(task.outputErrors ?? []).map((item) => item.error)].filter(Boolean).join('\n').toLowerCase()
+  return prompt.includes(q) || paramStr.includes(q) || errorStr.includes(q)
+}
+
 export function showCodexCliPrompt(force = false, reason = '接口返回的提示词已被改写') {
   const state = useStore.getState()
   const settings = state.settings
@@ -650,14 +671,7 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
 function getFalRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   const taskProfile = getTaskApiProfile(settings, task)
   if (taskProfile?.provider === 'fal') return taskProfile
-
-  const normalized = normalizeSettings(settings)
-  const active = getActiveApiProfile(normalized)
-  if (active.provider === 'fal') return active
-  return normalized.profiles.find((profile) =>
-    profile.provider === 'fal' &&
-    (profile.name === task.apiProfileName || profile.model === task.apiModel),
-  ) ?? normalized.profiles.find((profile) => profile.provider === 'fal') ?? null
+  return null
 }
 
 function getCustomRecoveryProfile(settings: AppSettings, task: TaskRecord) {
@@ -665,43 +679,18 @@ function getCustomRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   if (!provider || provider === 'openai' || provider === 'fal') return null
   const taskProfile = getTaskApiProfile(settings, task)
   if (taskProfile?.provider === provider) return taskProfile
-
-  const normalized = normalizeSettings(settings)
-  const active = getActiveApiProfile(normalized)
-  if (active.provider === provider) return active
-  return normalized.profiles.find((profile) =>
-    profile.provider === provider &&
-    (profile.name === task.apiProfileName || profile.model === task.apiModel),
-  ) ?? normalized.profiles.find((profile) => profile.provider === provider) ?? null
+  return null
 }
 
 export function getTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiProfile | null {
   const normalized = normalizeSettings(settings)
   const provider = task.apiProvider
 
-  if (task.apiProfileId) {
-    const byId = normalized.profiles.find((profile) => profile.id === task.apiProfileId)
-    if (byId && (!provider || byId.provider === provider)) return byId
-    return null
-  }
+  if (!task.apiProfileId) return null
 
-  if (!provider) return null
-
-
-  const candidates = normalized.profiles.filter((profile) => profile.provider === provider)
-  if (!candidates.length) return null
-
-  if (task.apiProfileName) {
-    const byName = candidates.find((profile) => profile.name === task.apiProfileName)
-    if (byName) return byName
-  }
-
-  if (task.apiModel) {
-    const modelMatches = candidates.filter((profile) => profile.model === task.apiModel)
-    if (modelMatches.length === 1) return modelMatches[0]
-  }
-
-  return candidates.length === 1 ? candidates[0] : null
+  const byId = normalized.profiles.find((profile) => profile.id === task.apiProfileId)
+  if (byId && (!provider || byId.provider === provider)) return byId
+  return null
 }
 
 function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile): AppSettings {
@@ -1053,7 +1042,7 @@ async function executeTask(taskId: string) {
 
     const result = await callImageApi({
       settings: requestSettings,
-      prompt: task.prompt,
+      prompt: replaceImageMentionsForApi(task.prompt),
       params: task.params,
       inputImageDataUrls: inputDataUrls,
       maskDataUrl,
@@ -1106,7 +1095,7 @@ async function executeTask(taskId: string) {
       (revisedPrompt) => revisedPrompt?.trim() && revisedPrompt.trim() !== task.prompt.trim(),
     )
     const hasRevisedPromptValue = shouldStoreRevisedPrompts && result.revisedPrompts?.some((revisedPrompt) => revisedPrompt?.trim())
-    if (taskProvider === 'openai' && !activeProfile.codexCli && !result.streamed) {
+    if (taskProvider === 'openai' && !activeProfile.codexCli) {
       if (promptWasRevised) {
         showCodexCliPrompt()
       } else if (!hasRevisedPromptValue) {
@@ -1120,6 +1109,7 @@ async function executeTask(taskId: string) {
     clearOpenAIWatchdogTimer(taskId)
     updateTaskInStore(taskId, {
       outputImages: outputIds,
+      outputErrors: result.failedRequests?.length ? result.failedRequests : undefined,
       actualParams,
       actualParamsByImage,
       revisedPromptByImage: revisedPromptByImage && Object.keys(revisedPromptByImage).length > 0 ? revisedPromptByImage : undefined,
@@ -1130,7 +1120,11 @@ async function executeTask(taskId: string) {
       customRecoverable: false,
     })
 
-    useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
+    const failedCount = result.failedRequests?.length ?? 0
+    const completionMessage = failedCount > 0
+      ? `生成完成：成功 ${outputIds.length} 张，失败 ${failedCount} 张`
+      : `生成完成，共 ${outputIds.length} 张图片`
+    useStore.getState().showToast(completionMessage, failedCount > 0 ? 'error' : 'success')
     const currentMask = useStore.getState().maskDraft
     if (
       maskDataUrl &&
@@ -1173,6 +1167,7 @@ async function executeTask(taskId: string) {
       updateTaskInStore(taskId, {
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
+        errorResponse: getApiErrorResponseSnapshot(err),
         falRecoverable: false,
         customRecoverable: false,
         finishedAt: Date.now(),
@@ -1360,6 +1355,32 @@ export async function removeMultipleTasks(taskIds: string[]) {
   }
 
   showToast(`已删除 ${taskIds.length} 条记录`, 'success')
+}
+
+/** 删除所有失败任务 */
+export async function clearFailedTasks(taskIds?: string[]) {
+  const targetTaskIds = taskIds ? new Set(taskIds) : null
+  const failedTasks = useStore.getState().tasks
+    .filter((task) => taskMatchesFilterStatus(task, 'error') && (!targetTaskIds || targetTaskIds.has(task.id)))
+  const failedTaskIds = failedTasks
+    .filter((task) => task.status === 'error')
+    .map((task) => task.id)
+  const partialFailedTaskIds = new Set(
+    failedTasks
+      .filter((task) => task.status !== 'error' && taskHasOutputErrors(task))
+      .map((task) => task.id),
+  )
+
+  if (failedTaskIds.length) await removeMultipleTasks(failedTaskIds)
+  if (partialFailedTaskIds.size) {
+    const { tasks, setTasks, selectedTaskIds, setSelectedTaskIds, showToast } = useStore.getState()
+    const updated = tasks.map((task) => partialFailedTaskIds.has(task.id) ? { ...task, outputErrors: undefined } : task)
+    setTasks(updated)
+    const nextSelectedTaskIds = selectedTaskIds.filter((id) => !partialFailedTaskIds.has(id))
+    if (nextSelectedTaskIds.length !== selectedTaskIds.length) setSelectedTaskIds(nextSelectedTaskIds)
+    await Promise.all(updated.filter((task) => partialFailedTaskIds.has(task.id)).map((task) => putTask(task)))
+    showToast(`已清除 ${partialFailedTaskIds.size} 条部分失败记录`, 'success')
+  }
 }
 
 /** 删除单条任务 */

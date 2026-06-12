@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useStore, addImageFromUrl, ensureImageCached } from '../store'
 import { copyBlobToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { downloadImageIds, formatExportFileTime } from '../lib/downloadImages'
+import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 
 export default function ImageContextMenu() {
@@ -54,6 +56,7 @@ export default function ImageContextMenu() {
       if (e.target instanceof Element && e.target.closest('[data-lightbox-root]')) {
         window.dispatchEvent(new Event('image-context-menu-dismiss-lightbox-click'))
       }
+      if (e.type === 'mousedown' || e.type === 'touchstart') suppressGlobalClicks()
       setMenuInfo(null)
     }
     window.addEventListener('mousedown', close, { capture: true })
@@ -94,21 +97,31 @@ export default function ImageContextMenu() {
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    const imageId = menuInfo.imageId
+    const src = menuInfo.src
     setMenuInfo(null)
+
     try {
-      const src = await getOriginalImageSrc()
-      const res = await fetch(src)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      const ext = blob.type.split('/')[1] || 'png'
-      a.download = `image-${Date.now()}.${ext}`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      showToast('开始下载', 'success')
+      let fileNameBase = ''
+      if (imageId) {
+        const tasks = useStore.getState().tasks
+        const matchedTask = tasks.find(t => t.outputImages?.includes(imageId))
+        if (matchedTask) {
+          fileNameBase = `task-${matchedTask.id}`
+        } else {
+          fileNameBase = `image-${imageId}`
+        }
+      } else {
+        const timeStr = formatExportFileTime(new Date())
+        fileNameBase = `image-${timeStr}`
+      }
+
+      const result = await downloadImageIds([imageId || src], fileNameBase)
+      if (result.successCount === 0) {
+        showToast('下载失败', 'error')
+      } else {
+        showToast('下载成功', 'success')
+      }
     } catch (err) {
       console.error(err)
       showToast('下载失败', 'error')

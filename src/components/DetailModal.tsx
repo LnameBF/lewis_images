@@ -6,7 +6,9 @@ import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
-import { CloseIcon, CopyIcon, EditIcon, TrashIcon } from './icons'
+import { downloadImageEntriesAsZip, downloadImageIds, getImageZipEntries } from '../lib/downloadImages'
+import { replaceImageMentionsForApi } from '../lib/promptImageMentions'
+import { CloseIcon, CopyIcon, DownloadIcon, EditIcon, TrashIcon } from './icons'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -84,12 +86,38 @@ export default function DetailModal() {
     }
   }, [task])
 
-  const currentOutputImageId = task?.outputImages?.[imageIndex] || ''
-  const currentOutputPreviewSrc = currentOutputImageId ? outputPreviewSrcs[currentOutputImageId] || '' : ''
   const maskTargetId = task?.maskTargetImageId || null
   const maskTargetSrc = maskTargetId ? imageSrcs[maskTargetId] || '' : ''
   const maskSrc = task?.maskImageId ? imageSrcs[task.maskImageId] || '' : ''
   const allInputImageIds = task?.inputImageIds ?? []
+  const outputSlots = useMemo(() => {
+    if (!task) return []
+    const outputErrors = task.outputErrors ?? []
+    if (outputErrors.length === 0) {
+      return task.outputImages.map((imageId, outputImageIndex) => ({
+        requestIndex: outputImageIndex,
+        outputImageIndex,
+        imageId,
+        error: '',
+      }))
+    }
+
+    const errorsByIndex = new Map(outputErrors.map((item) => [item.requestIndex, item.error]))
+    const requestedCount = Math.max(task.params.n, task.outputImages.length + outputErrors.length)
+    let outputImageIndex = 0
+    return Array.from({ length: requestedCount }, (_, requestIndex) => {
+      const error = errorsByIndex.get(requestIndex)
+      if (error) return { requestIndex, outputImageIndex: -1, imageId: '', error }
+      const imageId = task.outputImages[outputImageIndex] ?? ''
+      const slot = { requestIndex, outputImageIndex, imageId, error: '' }
+      outputImageIndex += 1
+      return slot
+    })
+  }, [task])
+  const currentOutputSlot = outputSlots[imageIndex]
+  const currentOutputImageId = currentOutputSlot?.imageId || ''
+  const currentOutputError = currentOutputSlot?.error || ''
+  const currentOutputPreviewSrc = currentOutputImageId ? outputPreviewSrcs[currentOutputImageId] || '' : ''
 
   useEffect(() => {
     if (!currentOutputImageId) {
@@ -154,14 +182,19 @@ export default function DetailModal() {
     }
   }, [maskTargetSrc, maskSrc])
 
+  const outputLen = outputSlots.length
+  useEffect(() => {
+    if (outputLen > 0 && imageIndex >= outputLen) setImageIndex(outputLen - 1)
+  }, [imageIndex, outputLen])
+
   if (!task) return null
 
-  const outputLen = task.outputImages?.length || 0
   const currentImageRatio = currentOutputImageId ? imageRatios[currentOutputImageId] : ''
   const currentImageSize = currentOutputImageId ? imageSizes[currentOutputImageId] : ''
   const currentActualParams = currentOutputImageId ? task.actualParamsByImage?.[currentOutputImageId] : undefined
   const currentRevisedPrompt = currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
-  const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== task.prompt.trim())
+  const promptSentToApi = replaceImageMentionsForApi(task.prompt).trim()
+  const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== promptSentToApi)
   const codexCliPromptKey = getCodexCliPromptKey(settings)
   const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
   const taskProvider = task.apiProvider
@@ -173,6 +206,9 @@ export default function DetailModal() {
   const showSourceInfo = Boolean(task.apiProvider || task.apiProfileName || task.apiModel)
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
+  const errorResponseText = task.errorResponse
+    ? JSON.stringify(task.errorResponse, null, 2)
+    : ''
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -224,7 +260,10 @@ export default function DetailModal() {
   }
 
   const handleCopyError = async () => {
-    const errorText = task.error || '生成失败'
+    const errorText = [
+      task.error || '生成失败',
+      errorResponseText ? `\n上游响应：\n${errorResponseText}` : '',
+    ].join('')
     try {
       await copyTextToClipboard(errorText)
       showToast('完整报错已复制', 'success')
@@ -265,6 +304,44 @@ export default function DetailModal() {
     }
   }
 
+  const handleDownloadCurrentOutput = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!currentOutputImageId || !task) return
+
+    try {
+      const result = await downloadImageIds([currentOutputImageId], `task-${task.id}`)
+      if (result.successCount === 0) {
+        showToast('下载失败', 'error')
+      } else {
+        showToast('下载成功', 'success')
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('下载失败', 'error')
+    }
+  }
+
+  const handleDownloadAllOutputs = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!task?.outputImages?.length) return
+
+    try {
+      const fileNameBase = `task-${task.id}`
+      const result = settings.zipDownloadRoutes.includes('task-detail-all')
+        ? await downloadImageEntriesAsZip(getImageZipEntries(task.outputImages, fileNameBase), fileNameBase)
+        : await downloadImageIds(task.outputImages, fileNameBase)
+      if (result.successCount === 0) {
+        showToast('下载失败', 'error')
+      } else if (result.failCount > 0) {
+        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
+      } else {
+        showToast(result.successCount > 1 ? `下载成功：${result.successCount} 张图片` : '下载成功', 'success')
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('下载失败', 'error')
+    }
+  }
   const handleRetry = () => {
     retryTask(task)
     setDetailTaskId(null)
@@ -322,7 +399,7 @@ export default function DetailModal() {
                   setImageLabelLeft(Math.max(8, imageRect.left - panelRect.left))
                 }}
                 onClick={() =>
-                  setLightboxImageId(task.outputImages[imageIndex], task.outputImages)
+                  setLightboxImageId(currentOutputImageId, task.outputImages)
                 }
                 alt=""
               />
@@ -345,6 +422,28 @@ export default function DetailModal() {
                       {formatDuration()}
                     </span>
                   )
+                )}
+              </div>
+              <div className="absolute right-3 top-3 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleDownloadCurrentOutput}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60"
+                  aria-label="下载当前图片"
+                  title="下载当前图片"
+                >
+                  <DownloadIcon className="h-4 w-4" />
+                </button>
+                {outputLen > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadAllOutputs}
+                    className="inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-black/40 px-2 text-xs font-medium text-white backdrop-blur-sm transition hover:bg-black/60"
+                    aria-label="下载全部图片"
+                    title="下载全部图片"
+                  >
+                    全部
+                  </button>
                 )}
               </div>
               {outputLen > 1 && (
@@ -377,6 +476,47 @@ export default function DetailModal() {
                 </>
               )}
             </>
+          )}
+          {task.status === 'done' && outputLen > 0 && currentOutputError && (
+            <div className="w-full max-w-md px-4 text-center">
+              <svg className="w-10 h-10 text-red-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm font-medium text-red-500">第 {(currentOutputSlot?.requestIndex ?? imageIndex) + 1} 张生成失败</p>
+              <p
+                className="mt-2 overflow-hidden whitespace-pre-line text-sm leading-6 text-red-500 break-words"
+                style={{
+                  display: '-webkit-box',
+                  WebkitBoxOrient: 'vertical',
+                  WebkitLineClamp: 8,
+                }}
+              >
+                {currentOutputError}
+              </p>
+              {outputLen > 1 && (
+                <>
+                  <button
+                    onClick={() => setImageIndex((imageIndex - 1 + outputLen) % outputLen)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 transition"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setImageIndex((imageIndex + 1) % outputLen)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 transition"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                  <span className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/50 text-white text-xs px-2 py-0.5 rounded-full">
+                    {imageIndex + 1} / {outputLen}
+                  </span>
+                </>
+              )}
+            </div>
           )}
           {(task.status === 'running' || isFalReconnecting) && (
             <>
@@ -417,6 +557,14 @@ export default function DetailModal() {
               >
                 {task.error || '生成失败'}
               </p>
+              {errorResponseText && (
+                <div className="mt-3 max-h-48 overflow-auto rounded border border-red-200/70 bg-red-50/70 p-3 text-left dark:border-red-400/20 dark:bg-red-950/20">
+                  <div className="mb-2 text-xs font-medium text-red-500">上游响应</div>
+                  <pre className="whitespace-pre-wrap break-all text-xs leading-5 text-red-700 dark:text-red-200">
+                    {errorResponseText}
+                  </pre>
+                </div>
+              )}
               <div className="mt-3 flex items-center justify-center gap-2">
                 <button
                   type="button"

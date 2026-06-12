@@ -11,13 +11,15 @@ import type {
   CustomProviderSubmitMapping,
   CustomProviderTemplate,
 } from '../types'
+import { DEFAULT_ZIP_DOWNLOAD_ROUTES, ZIP_DOWNLOAD_ROUTE_VALUES } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
 
 const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'https://www.cctq.ai/v1'
 export const IMAGE_MODEL_OPTIONS = ['gpt-image-2', 'gpt-image-2-pro'] as const
-export const DEFAULT_IMAGES_MODEL = 'gpt-image-2-pro'
+export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
+export const DEFAULT_CODEX_CLI = true
 
 const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
@@ -34,8 +36,7 @@ const DEFAULT_GENERATE_BODY = {
   moderation: '$params.moderation',
   output_compression: '$params.output_compression',
   n: '$params.n',
-  stream: true,
-  partial_images: 3,
+  response_format: 'b64_json',
 }
 const DEFAULT_EDIT_BODY = DEFAULT_GENERATE_BODY
 const DEFAULT_OPENAI_RESULT: CustomProviderResultMapping = {
@@ -43,7 +44,7 @@ const DEFAULT_OPENAI_RESULT: CustomProviderResultMapping = {
   b64JsonPaths: ['data.*.b64_json'],
 }
 const DEFAULT_EDIT_FILES: CustomProviderFileMapping[] = [
-  { field: 'image[]', source: 'inputImages', array: true },
+  { field: 'image', source: 'inputImages', array: true },
   { field: 'mask', source: 'mask' },
 ]
 
@@ -322,6 +323,12 @@ function validateImportedProfileRecord(input: unknown) {
   }
 }
 
+function normalizeZipDownloadRoutes(value: unknown) {
+  if (!Array.isArray(value)) return [...DEFAULT_ZIP_DOWNLOAD_ROUTES]
+  const allowed = new Set<string>(ZIP_DOWNLOAD_ROUTE_VALUES)
+  return value.filter((item): item is typeof ZIP_DOWNLOAD_ROUTE_VALUES[number] => typeof item === 'string' && allowed.has(item))
+}
+
 export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSettings {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const customProviders = normalizeCustomProviderDefinitions(record.customProviders)
@@ -354,6 +361,8 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     persistInputOnRestart: typeof record.persistInputOnRestart === 'boolean' ? record.persistInputOnRestart : true,
     reuseTaskApiProfileTemporarily: typeof record.reuseTaskApiProfileTemporarily === 'boolean' ? record.reuseTaskApiProfileTemporarily : false,
     alwaysShowRetryButton: typeof record.alwaysShowRetryButton === 'boolean' ? record.alwaysShowRetryButton : false,
+    enterSubmit: typeof record.enterSubmit === 'boolean' ? record.enterSubmit : false,
+    zipDownloadRoutes: normalizeZipDownloadRoutes(record.zipDownloadRoutes),
     profiles,
     activeProfileId,
   }
@@ -465,7 +474,7 @@ function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
     profile.apiKey === '' &&
     profile.model === DEFAULT_IMAGES_MODEL &&
     profile.timeout === DEFAULT_API_TIMEOUT &&
-    profile.codexCli === false &&
+    profile.codexCli === DEFAULT_CODEX_CLI &&
     profile.apiProxy === false
 }
 
@@ -616,11 +625,13 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   apiKey: '',
   model: DEFAULT_IMAGES_MODEL,
   timeout: DEFAULT_API_TIMEOUT,
-  codexCli: false,
+  codexCli: DEFAULT_CODEX_CLI,
   apiProxy: false,
   customProviders: [],
   clearInputAfterSubmit: false,
   persistInputOnRestart: true,
   reuseTaskApiProfileTemporarily: false,
   alwaysShowRetryButton: false,
+  enterSubmit: false,
+  zipDownloadRoutes: DEFAULT_ZIP_DOWNLOAD_ROUTES,
 })

@@ -1,19 +1,72 @@
 import { useRef, useEffect, useCallback, useState, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached } from '../store'
+import { useStore, submitTask, addImageFromFile, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
+import { getAtImageQuery, getImageMentionLabel, getPromptMentionParts, imageMentionMatches, insertImageMention } from '../lib/promptImageMentions'
 import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
+import { dismissAllTooltips } from '../lib/tooltipDismiss'
+import { getSafeBoundingClientRect } from '../lib/domRect'
+import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
+import { CloseIcon } from './icons'
+
+
+/** 获取 contentEditable 中光标的纯文本偏移量 */
+function getContentEditableCursor(el: HTMLElement): number {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return el.textContent?.length ?? 0
+  try {
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return el.textContent?.length ?? 0
+    const preRange = document.createRange()
+    preRange.selectNodeContents(el)
+    preRange.setEnd(range.startContainer, range.startOffset)
+    return preRange.toString().length
+  } catch {
+    return el.textContent?.length ?? 0
+  }
+}
+
+/** 在 contentEditable 中设置光标到指定纯文本偏移量 */
+function setContentEditableCursor(el: HTMLElement, offset: number) {
+  const sel = window.getSelection()
+  if (!sel) return
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let remaining = offset
+  let node: Text | null = null
+  while (walker.nextNode()) {
+    node = walker.currentNode as Text
+    if (remaining <= node.length) {
+      const range = document.createRange()
+      range.setStart(node, remaining)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return
+    }
+    remaining -= node.length
+  }
+  // 如果偏移超出，放到末尾
+  if (node) {
+    const range = document.createRange()
+    range.setStart(node, node.length)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+}
 
 /** 通用悬浮气泡提示 */
 function ButtonTooltip({ visible, text }: { visible: boolean; text: ReactNode }) {
+  if (!visible) return null
+
   return (
-    <ViewportTooltip visible={visible} className="z-10 whitespace-nowrap">
+    <ViewportTooltip visible className="z-10 whitespace-nowrap">
       {text}
     </ViewportTooltip>
   )
@@ -60,13 +113,8 @@ export default function InputBar() {
     
     return sorted.filter((t) => {
       if (filterFavorite && !t.isFavorite) return false
-      const matchStatus = filterStatus === 'all' || t.status === filterStatus
-      if (!matchStatus) return false
-      
-      if (!q) return true
-      const prompt = (t.prompt || '').toLowerCase()
-      const paramStr = JSON.stringify(t.params).toLowerCase()
-      return prompt.includes(q) || paramStr.includes(q)
+      if (!taskMatchesFilterStatus(t, filterStatus)) return false
+      return taskMatchesSearchQuery(t, q)
     })
   }, [tasks, searchQuery, filterStatus, filterFavorite])
 
@@ -114,49 +162,27 @@ export default function InputBar() {
       showToast('选中的记录没有图片', 'info')
       return
     }
-    
-    showToast(`开始下载 ${imageIds.length} 张图片...`, 'info')
-    let successCount = 0
-    let failCount = 0
-    
-    for (const id of imageIds) {
-      try {
-        let url = getCachedImage(id)
-        if (!url) {
-          url = await ensureImageCached(id)
-        }
-        if (!url) {
-          failCount++
-          continue
-        }
-        
-        const res = await fetch(url)
-        const blob = await res.blob()
-        const objUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = objUrl
-        const ext = blob.type.split('/')[1] || 'png'
-        a.download = `image-${Date.now()}-${successCount}.${ext}`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(objUrl)
-        successCount++
-        
-        await new Promise(resolve => setTimeout(resolve, 100))
-      } catch (err) {
-        console.error(err)
-        failCount++
+
+    try {
+      const timeStr = formatExportFileTime(new Date())
+      const fileNameBase = `batch-${timeStr}`
+      const { successCount, failCount } = settings.zipDownloadRoutes.includes('task-selection')
+        ? await downloadImageEntriesAsZip(getTaskOutputImageZipEntries(selectedTasks), fileNameBase)
+        : await downloadImageIds(imageIds, fileNameBase)
+
+      if (successCount === 0) {
+        showToast('下载失败', 'error')
+      } else if (failCount > 0) {
+        showToast(`部分下载失败：成功 ${successCount}，失败 ${failCount}`, 'error')
+      } else {
+        showToast(successCount > 1 ? `下载成功：${successCount} 张图片` : '下载成功', 'success')
       }
-    }
-    
-    if (failCount > 0) {
-      showToast(`下载完成: 成功 ${successCount}，失败 ${failCount}`, 'info')
-    } else {
-      showToast(`成功下载 ${successCount} 张图片`, 'success')
+    } catch (err) {
+      console.error(err)
+      showToast('下载失败', 'error')
     }
     clearSelection()
-  }, [tasks, selectedTaskIds, showToast, clearSelection])
+  }, [tasks, selectedTaskIds, settings.zipDownloadRoutes, showToast, clearSelection])
 
   const maskDraft = useStore((s) => s.maskDraft)
   const clearMaskDraft = useStore((s) => s.clearMaskDraft)
@@ -164,12 +190,13 @@ export default function InputBar() {
   const moveInputImage = useStore((s) => s.moveInputImage)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef<HTMLDivElement>(null)
   const prevHeightRef = useRef(42)
 
   const [isDragging, setIsDragging] = useState(false)
+  const [isSingleLine, setIsSingleLine] = useState(true)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
   const [compressionHintVisible, setCompressionHintVisible] = useState(false)
@@ -182,14 +209,20 @@ export default function InputBar() {
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
   const [imageDragIndex, setImageDragIndex] = useState<number | null>(null)
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
+  const [atImageMenuIndex, setAtImageMenuIndex] = useState(0)
+  const [atImageMenuDismissed, setAtImageMenuDismissed] = useState(false)
   const [touchDragPreview, setTouchDragPreview] = useState<{ src: string; x: number; y: number } | null>(null)
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
+  const suppressHandleClickUntilRef = useRef(0)
   const imageDragIndexRef = useRef<number | null>(null)
   const imageTouchDragRef = useRef({ index: null as number | null, startX: 0, startY: 0, moved: false })
   const imageDragOverIndexRef = useRef<number | null>(null)
   const imageDragPreviewRef = useRef<HTMLElement | null>(null)
   const suppressImageClickRef = useRef(false)
+  const isUserInputRef = useRef(false)
+  const [cursorPos, setCursorPos] = useState(0)
+  const [menuLeft, setMenuLeft] = useState(0)
   const maskConflictNoticeShownRef = useRef(false)
   const compressionHintTimerRef = useRef<number | null>(null)
   const moderationHintTimerRef = useRef<number | null>(null)
@@ -197,12 +230,14 @@ export default function InputBar() {
   const qualityHintTimerRef = useRef<number | null>(null)
   const imageHintTimerRef = useRef<number | null>(null)
   const nLimitHintTimerRef = useRef<number | null>(null)
+  const nTimeoutHintTimerRef = useRef<number | null>(null)
   const [outputCompressionInput, setOutputCompressionInput] = useState(
     params.output_compression == null ? '' : String(params.output_compression),
   )
   const [nInput, setNInput] = useState(String(params.n))
   const [nInputFocused, setNInputFocused] = useState(false)
   const [nLimitHintVisible, setNLimitHintVisible] = useState(false)
+  const [nTimeoutHintVisible, setNTimeoutHintVisible] = useState(false)
   const dragCounter = useRef(0)
   const isMobile = useIsMobile()
 
@@ -225,6 +260,7 @@ export default function InputBar() {
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const isFalTextToImage = false && inputImages.length === 0
   const nLimitHintText = `最大请求数量为 ${outputImageLimit}`
+  const nTimeoutHintText = '大于 1 的数量很可能会超时'
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
     : normalizeImageSize(params.size) || DEFAULT_PARAMS.size
@@ -247,7 +283,46 @@ export default function InputBar() {
   const referenceImages = maskTargetImage
     ? inputImages.filter((img) => img.id !== maskTargetImage.id)
     : inputImages
+  const cursorPosition = cursorPos
+  const atImageQuery = getAtImageQuery(prompt, cursorPosition, inputImages)
+  const atImageOptions = atImageQuery
+    ? inputImages
+        .map((img, index) => ({ img, index }))
+        .filter(({ index }) => imageMentionMatches(atImageQuery.query, index))
+    : []
+  const showAtImageMenu = !atImageMenuDismissed && atImageOptions.length > 0
 
+
+
+
+
+  const selectAtImageOption = useCallback((imageIndex: number) => {
+    const el = textareaRef.current
+    const cursor = el ? getContentEditableCursor(el) : prompt.length
+    const query = getAtImageQuery(prompt, cursor, inputImages)
+    setAtImageMenuDismissed(true)
+    setAtImageMenuIndex(0)
+    if (!query) return
+
+    const next = insertImageMention(prompt, query.start, cursor, imageIndex)
+    setPrompt(next.prompt)
+    window.setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        setContentEditableCursor(textareaRef.current, next.cursor)
+      }
+    }, 0)
+  }, [inputImages, prompt, setPrompt])
+
+
+  const handleClearPrompt = useCallback(() => {
+    isUserInputRef.current = false
+    setPrompt('')
+    if (textareaRef.current) {
+      textareaRef.current.innerHTML = ''
+      textareaRef.current.focus()
+    }
+  }, [setPrompt])
   useEffect(() => {
     setOutputCompressionInput(
       params.output_compression == null ? '' : String(params.output_compression),
@@ -284,6 +359,9 @@ export default function InputBar() {
     }
     if (nLimitHintTimerRef.current != null) {
       window.clearTimeout(nLimitHintTimerRef.current)
+    }
+    if (nTimeoutHintTimerRef.current != null) {
+      window.clearTimeout(nTimeoutHintTimerRef.current)
     }
   }, [])
 
@@ -355,6 +433,17 @@ export default function InputBar() {
       window.clearTimeout(nLimitHintTimerRef.current)
       nLimitHintTimerRef.current = null
     }
+  }, [])
+
+  const showNTimeoutHint = useCallback(() => {
+    setNTimeoutHintVisible(true)
+    if (nTimeoutHintTimerRef.current != null) {
+      window.clearTimeout(nTimeoutHintTimerRef.current)
+    }
+    nTimeoutHintTimerRef.current = window.setTimeout(() => {
+      setNTimeoutHintVisible(false)
+      nTimeoutHintTimerRef.current = null
+    }, 2000)
   }, [])
 
   const handleNInputChange = useCallback((value: string) => {
@@ -533,7 +622,40 @@ export default function InputBar() {
     e.target.value = ''
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (showAtImageMenu) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setAtImageMenuIndex((idx) => (idx + 1) % atImageOptions.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setAtImageMenuIndex((idx) => (idx - 1 + atImageOptions.length) % atImageOptions.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        selectAtImageOption(atImageOptions[atImageMenuIndex]?.index ?? atImageOptions[0].index)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setAtImageMenuIndex(0)
+        textareaRef.current?.blur()
+        return
+      }
+    }
+
+    // 阻止 contentEditable 默认换行
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      if (e.ctrlKey || e.metaKey) {
+        submitTask()
+      }
+      return
+    }
+
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       submitTask()
@@ -630,6 +752,9 @@ export default function InputBar() {
     const desired = Math.max(scrollH, minH)
     const targetH = desired > maxH ? maxH : desired
 
+    // 判断是否只有一行
+    setIsSingleLine(desired <= minH)
+
     // 2. 将高度设回上一次的实际高度，强制重绘，准备开始动画
     el.style.height = prevHeightRef.current + 'px'
     void el.offsetHeight
@@ -644,9 +769,86 @@ export default function InputBar() {
 
   useEffect(() => {
     adjustTextareaHeight()
-  }, [prompt, adjustTextareaHeight])
+  }, [prompt, inputImages, adjustTextareaHeight, isMobile, mobileCollapsed])
 
-  // 图片队列变化时也重新计算
+  // 将 prompt 同步渲染到 contentEditable（含胶囊 tag）
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    // 用户正在输入时不重新渲染 DOM，避免光标跳动
+    if (isUserInputRef.current) {
+      isUserInputRef.current = false
+      return
+    }
+    const parts = getPromptMentionParts(prompt, inputImages)
+    const html = prompt
+      ? parts.map((part) =>
+          part.type === 'mention'
+            ? `<span contenteditable="false" class="mention-tag">${part.text}</span>`
+            : part.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        ).join('')
+      : ''
+    if (el.innerHTML !== html) {
+      el.innerHTML = html
+    }
+  }, [prompt, inputImages])
+
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    const last = el.lastChild
+    const hasSentinel = last instanceof HTMLBRElement && last.dataset.sentinelBr === 'true'
+    const needSentinel = prompt.endsWith('\n')
+    if (needSentinel && !hasSentinel) {
+      const br = document.createElement('br')
+      br.dataset.sentinelBr = 'true'
+      el.appendChild(br)
+    } else if (!needSentinel && hasSentinel) {
+      last.remove()
+    }
+  }, [prompt, inputImages])
+
+  // 监听 selectionchange 以在光标移动时更新位置（contentEditable 的 onSelect 不可靠）
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const el = textareaRef.current
+      if (!el) return
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0 || !sel.anchorNode) return
+      if (!el.contains(sel.anchorNode)) return
+      setCursorPos(getContentEditableCursor(el))
+      const range = sel.getRangeAt(0)
+      const rangeRect = range.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+      if (rangeRect.width === 0 && rangeRect.height === 0) return
+      setMenuLeft(rangeRect.left - elRect.left)
+    }
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => document.removeEventListener('selectionchange', handleSelectionChange)
+  }, [])
+
+  // 点击屏幕外部、空白处、卡片间隙等，使输入栏相关输入框失焦
+  useEffect(() => {
+    const handleGlobalMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+
+      if (document.activeElement instanceof HTMLElement) {
+        // 如果当前聚焦的元素属于输入栏（主输入框、数量或压缩率输入框等）
+        if (document.activeElement.closest('[data-input-bar]')) {
+          // 如果点击的区域不在输入栏内部
+          if (!target.closest('[data-input-bar]')) {
+            document.activeElement.blur()
+          }
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleGlobalMouseDown, true)
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalMouseDown, true)
+    }
+  }, [])
   useEffect(() => {
     adjustTextareaHeight()
   }, [inputImages.length, Boolean(maskDraft), maskPreviewUrl, adjustTextareaHeight])
@@ -670,8 +872,8 @@ export default function InputBar() {
       if (dy < -30) setMobileCollapsed(false)
     }
     const onTouchEnd = () => {
-      if (!dragTouchRef.current.moved) {
-        setMobileCollapsed((v) => !v)
+      if (dragTouchRef.current.moved) {
+        suppressHandleClickUntilRef.current = Date.now() + 500
       }
     }
     el.addEventListener('touchstart', onTouchStart, { passive: true })
@@ -693,7 +895,8 @@ export default function InputBar() {
     if (!target) return null
     const idx = Number(target.dataset.inputImageIndex)
     if (!Number.isInteger(idx)) return null
-    const rect = target.getBoundingClientRect()
+    const rect = getSafeBoundingClientRect(target)
+    if (!rect) return null
     return touch.clientX < rect.left + rect.width / 2 ? idx : idx + 1
   }
 
@@ -706,7 +909,8 @@ export default function InputBar() {
     if (!maskTargetImage) return false
     const maskEl = document.querySelector<HTMLElement>('[data-input-image-index="0"]')
     if (!maskEl) return false
-    const rect = maskEl.getBoundingClientRect()
+    const rect = getSafeBoundingClientRect(maskEl)
+    if (!rect) return false
     return clientX < rect.left + rect.width / 2
   }
 
@@ -797,7 +1001,8 @@ export default function InputBar() {
       e.dataTransfer.dropEffect = 'move'
       const fromIdx = imageDragIndexRef.current
       if (fromIdx === null || fromIdx === idx) return
-      const rect = e.currentTarget.getBoundingClientRect()
+      const rect = getSafeBoundingClientRect(e.currentTarget)
+      if (!rect) return
       setImageDragTarget(e.clientX < rect.left + rect.width / 2 ? idx : idx + 1, e.clientX)
     }
 
@@ -861,7 +1066,7 @@ export default function InputBar() {
       <div
         key={img.id}
         data-input-image-index={idx}
-        className={`relative group inline-block shrink-0 transition-opacity ${isImageDragging ? 'opacity-40' : ''}`}
+        className={`relative group inline-block h-[52px] w-[52px] shrink-0 self-start transition-opacity ${isImageDragging ? 'opacity-40' : ''}`}
         style={{ touchAction: isMaskTarget ? 'auto' : 'none' }}
         draggable={!isMobile && !isMaskTarget}
         onMouseEnter={() => imageHintText && (!isMobile || isMaskTarget) && showImageHint(img.id)}
@@ -874,6 +1079,19 @@ export default function InputBar() {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          const el = textareaRef.current
+          const cursor = el ? getContentEditableCursor(el) : prompt.length
+          const next = insertImageMention(prompt, cursor, cursor, idx)
+          setPrompt(next.prompt)
+          window.setTimeout(() => {
+            if (textareaRef.current) {
+              textareaRef.current.focus()
+              setContentEditableCursor(textareaRef.current, next.cursor)
+            }
+          }, 0)
+        }}
       >
         <ButtonTooltip
           visible={imageHintId === img.id && Boolean(imageHintText) && (!isMobile || isMaskTarget)}
@@ -886,7 +1104,7 @@ export default function InputBar() {
           <div className="absolute -right-[5px] top-0 bottom-0 w-[2px] bg-blue-500 rounded-full z-40 shadow-sm pointer-events-none" />
         )}
         <div
-          className={`relative w-[52px] h-[52px] rounded-xl overflow-hidden shadow-sm cursor-grab active:cursor-grabbing select-none ${
+          className={`relative w-[52px] h-[52px] rounded-xl shadow-sm cursor-grab active:cursor-grabbing select-none ${
             isMaskTarget
               ? 'border-2 border-blue-500'
               : 'border border-gray-200 dark:border-white/[0.08]'
@@ -905,17 +1123,22 @@ export default function InputBar() {
           }}
         >
           {displaySrc && (
-            <img
-              src={displaySrc}
-              className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
-              alt=""
-            />
+            <div className="h-full w-full overflow-hidden rounded-xl">
+              <img
+                src={displaySrc}
+                className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
+                alt=""
+              />
+            </div>
           )}
           {isMaskTarget && (
             <span className="absolute left-1 top-1 rounded bg-blue-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
               MASK
             </span>
           )}
+          <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1.5 py-0.5 text-[8px] font-semibold leading-none text-white backdrop-blur-sm z-10 pointer-events-none">
+            图{idx + 1}
+          </span>
           {canEdit && (
             <button 
               className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
@@ -930,20 +1153,20 @@ export default function InputBar() {
               </svg>
             </button>
           )}
+          {!isMaskTarget && (
+            <span
+              className="absolute right-0 top-0 flex h-5 w-5 translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 z-30"
+              onClick={(e) => {
+                e.stopPropagation()
+                removeInputImage(idx)
+              }}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </span>
+          )}
         </div>
-        {!isMaskTarget && (
-          <span
-            className="absolute -top-2 -right-2 w-[22px] h-[22px] rounded-full bg-red-500 text-white flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-600 z-30"
-            onClick={(e) => {
-              e.stopPropagation()
-              removeInputImage(idx)
-            }}
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </span>
-        )}
       </div>
     )
   }
@@ -1117,7 +1340,11 @@ export default function InputBar() {
         <input
           value={nInput}
           onChange={(e) => handleNInputChange(e.target.value)}
-          onFocus={() => setNInputFocused(true)}
+          onFocus={() => {
+            setNInputFocused(true)
+            showNTimeoutHint()
+          }}
+          onClick={showNTimeoutHint}
           onBlur={() => {
             setNInputFocused(false)
             commitN()
@@ -1137,7 +1364,10 @@ export default function InputBar() {
           max={outputImageLimit}
           className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] focus:outline-none text-xs transition-all duration-200 shadow-sm"
         />
-        <ButtonTooltip visible={nLimitHintVisible} text={nLimitHintText} />
+        <ButtonTooltip
+          visible={nLimitHintVisible || nTimeoutHintVisible}
+          text={nLimitHintVisible ? nLimitHintText : nTimeoutHintText}
+        />
       </label>
     </div>
   )
@@ -1261,7 +1491,13 @@ export default function InputBar() {
           <div
             ref={handleRef}
             className="sm:hidden flex justify-center pt-0.5 pb-2 -mt-1 cursor-pointer touch-none"
-            onClick={() => setMobileCollapsed((v) => !v)}
+            onClick={() => {
+              if (Date.now() < suppressHandleClickUntilRef.current) {
+                suppressHandleClickUntilRef.current = 0
+                return
+              }
+              setMobileCollapsed((v) => !v)
+            }}
           >
             <div className={`w-10 h-1 rounded-full bg-gray-300 dark:bg-white/[0.06] transition-transform duration-200 ${mobileCollapsed ? 'scale-x-75' : ''}`} />
           </div>
@@ -1287,15 +1523,95 @@ export default function InputBar() {
           )}
 
           {/* 输入框 */}
-          <textarea
-            ref={textareaRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            placeholder="描述你想生成的图片..."
-            className="w-full px-4 py-3 rounded-2xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-sm focus:outline-none leading-relaxed resize-none shadow-sm transition-[border-color,box-shadow] duration-200"
-          />
+          <div className="relative">
+            {showAtImageMenu && (
+              <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
+                <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-400 dark:text-gray-500">选择当前参考图</div>
+                <div className="max-h-56 overflow-y-auto custom-scrollbar">
+                  {atImageOptions.map(({ img, index }, optionIndex) => (
+                    <button
+                      key={img.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        selectAtImageOption(index)
+                      }}
+                      onMouseEnter={() => setAtImageMenuIndex(optionIndex)}
+                      className={`flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-xs transition-colors ${
+                        optionIndex === atImageMenuIndex
+                          ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300'
+                          : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <span className="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-gray-200/70 dark:border-white/[0.08]">
+                        <img src={img.dataUrl} className="h-full w-full object-cover" alt="" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{getImageMentionLabel(index)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div
+              ref={textareaRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={(e) => {
+                isUserInputRef.current = true
+                const el = e.currentTarget
+                setCursorPos(getContentEditableCursor(el))
+                const text = el.textContent ?? ''
+                setPrompt(text)
+                setAtImageMenuIndex(0)
+                setAtImageMenuDismissed(false)
+              }}
+              onSelect={() => {
+                if (textareaRef.current) {
+                  setCursorPos(getContentEditableCursor(textareaRef.current))
+                }
+                setAtImageMenuIndex(0)
+                setAtImageMenuDismissed(false)
+              }}
+              onKeyDown={handleKeyDown}
+              onClick={(e) => {
+                const el = textareaRef.current
+                if (!el) return
+                el.querySelectorAll('.mention-tag.selected').forEach((t) => t.classList.remove('selected'))
+                const target = e.target as HTMLElement
+                if (target.classList.contains('mention-tag')) {
+                  target.classList.add('selected')
+                  const sel = window.getSelection()
+                  if (sel) {
+                    const range = document.createRange()
+                    range.selectNode(target)
+                    sel.removeAllRanges()
+                    sel.addRange(range)
+                  }
+                }
+              }}
+              aria-label="描述你想生成的图片，可输入 @ 指定当前参考图..."
+              className="col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
+            />
+            {prompt.length === 0 && (
+              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500${
+                isMobile && mobileCollapsed ? ' truncate' : ''
+              }`}>
+                描述你想生成的图片，可输入 @ 指定当前参考图...
+              </div>
+            )}
+            {prompt.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearPrompt}
+                className={`absolute right-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] rounded-full p-1 transition-all duration-200 focus:outline-none z-10 flex items-center justify-center ${
+                  isSingleLine ? 'top-1/2 -translate-y-1/2' : 'top-3'
+                }`}
+                title="清空文本"
+              >
+                <CloseIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
 
           {/* 参数 + 按钮 */}
           <div className="mt-3">
@@ -1309,7 +1625,6 @@ export default function InputBar() {
                   onMouseEnter={() => setAttachHover(true)}
                   onMouseLeave={() => setAttachHover(false)}
                 >
-                  <ButtonTooltip visible={atImageLimit && attachHover} text={`参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`} />
                   <button
                     onClick={() => !atImageLimit && fileInputRef.current?.click()}
                     className={`p-2.5 rounded-xl transition-all shadow-sm ${

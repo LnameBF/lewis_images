@@ -3,6 +3,12 @@
 export type BuiltInApiProvider = 'openai'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
+export const ZIP_DOWNLOAD_ROUTE_VALUES = [
+  'task-selection',
+  'task-detail-all',
+] as const
+export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
+export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection']
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
 export type CustomProviderContentType = 'json' | 'multipart'
@@ -76,6 +82,8 @@ export interface AppSettings {
   persistInputOnRestart: boolean
   reuseTaskApiProfileTemporarily: boolean
   alwaysShowRetryButton: boolean
+  enterSubmit: boolean
+  zipDownloadRoutes: ZipDownloadRoute[]
   profiles: ApiProfile[]
   activeProfileId: string
 }
@@ -119,6 +127,15 @@ export interface MaskDraft {
 
 export type TaskStatus = 'running' | 'done' | 'error'
 
+export interface ApiErrorResponseSnapshot {
+  status?: number
+  statusText?: string
+  url?: string
+  headers?: Record<string, string>
+  body: string
+  truncated?: boolean
+}
+
 export interface TaskRecord {
   id: string
   prompt: string
@@ -153,8 +170,11 @@ export interface TaskRecord {
   maskImageId?: string | null
   /** 输出图片的 image store id 列表 */
   outputImages: string[]
+  /** 并发多图中失败的输出槽位，requestIndex 为从 0 开始的请求序号 */
+  outputErrors?: Array<{ requestIndex: number; error: string }>
   status: TaskStatus
   error: string | null
+  errorResponse?: ApiErrorResponseSnapshot
   createdAt: number
   finishedAt: number | null
   /** 总耗时毫秒 */
@@ -188,21 +208,6 @@ export interface StoredImageThumbnail {
   height?: number
   /** 缩略图生成参数版本 */
   thumbnailVersion?: number
-}
-
-// ===== API 请求体 =====
-
-export interface ImageGenerationRequest {
-  model: string
-  prompt: string
-  size: string
-  quality: string
-  output_format: string
-  moderation: string
-  output_compression?: number
-  n?: number
-  stream?: boolean
-  partial_images?: number
 }
 
 // ===== API 响应 =====

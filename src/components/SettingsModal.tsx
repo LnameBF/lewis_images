@@ -5,6 +5,7 @@ import { isApiProxyAvailable, readClientDevProxyConfig } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData } from '../store'
 import {
   createDefaultOpenAIProfile,
+  DEFAULT_CODEX_CLI,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
@@ -21,7 +22,7 @@ import {
   switchApiProfileProvider,
 } from '../lib/apiProfiles'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import type { ApiProfile, AppSettings, CustomProviderDefinition } from '../types'
+import type { ApiProfile, AppSettings, CustomProviderDefinition, ZipDownloadRoute } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
@@ -35,6 +36,10 @@ function newId(prefix: string) {
 
 const ADD_CUSTOM_PROVIDER_VALUE = '__add_custom_provider__'
 const modelSelectOptions = IMAGE_MODEL_OPTIONS.map((model) => ({ label: model, value: model }))
+const ZIP_DOWNLOAD_ROUTE_OPTIONS: Array<{ route: ZipDownloadRoute; label: string; description: string }> = [
+  { route: 'task-selection', label: '任务列表 > 多选', description: '选中多个任务后，将输出图片下载为一个 ZIP。' },
+  { route: 'task-detail-all', label: '任务详情 > 下载全部', description: '任务详情弹窗中下载当前任务的所有输出图时使用 ZIP。' },
+]
 
 interface CustomProviderForm {
   json: string
@@ -55,6 +60,7 @@ const DEFAULT_CUSTOM_PROVIDER_MANIFEST = {
       moderation: '$params.moderation',
       output_compression: '$params.output_compression',
       n: '$params.n',
+      response_format: 'b64_json',
     },
     result: {
       imageUrlPaths: ['data.*.url'],
@@ -74,9 +80,10 @@ const DEFAULT_CUSTOM_PROVIDER_MANIFEST = {
       moderation: '$params.moderation',
       output_compression: '$params.output_compression',
       n: '$params.n',
+      response_format: 'b64_json',
     },
     files: [
-      { field: 'image[]', source: 'inputImages', array: true },
+      { field: 'image', source: 'inputImages', array: true },
       { field: 'mask', source: 'mask' },
     ],
     result: {
@@ -114,7 +121,7 @@ function isPristineNewOpenAIProfile(profile: ApiProfile) {
     profile.apiKey === '' &&
     profile.model === DEFAULT_IMAGES_MODEL &&
     profile.timeout === DEFAULT_SETTINGS.timeout &&
-    profile.codexCli === false &&
+    profile.codexCli === DEFAULT_CODEX_CLI &&
     profile.apiProxy === false
 }
 
@@ -139,7 +146,7 @@ const CUSTOM_PROVIDER_LLM_PROMPT = `# 角色
 2. 如果当前环境支持读取链接，主动读取；否则要求用户粘贴文档内容。
 3. 在未获得文档前不要猜测，不要生成占位配置。
 4. 从文档中判断提交接口、图生图接口、异步任务查询接口、状态值、结果图片路径。
-5. 如果文档中明确了 API Base URL，在 profiles 中填入；model 只能使用 "gpt-image-2" 或 "gpt-image-2-pro"，其他模型统一写 "gpt-image-2-pro"；如果未明确 API Base URL，baseUrl 留空，由用户稍后填写。
+5. 如果文档中明确了 API Base URL，在 profiles 中填入；model 只能使用 "gpt-image-2" 或 "gpt-image-2-pro"，其他模型统一写 "gpt-image-2"；如果未明确 API Base URL，baseUrl 留空，由用户稍后填写。
 6. 输出最终 JSON；不要索要 API Key。
 
 # 输出结构
@@ -187,7 +194,7 @@ body 模板变量：
 - $mask.dataUrl：遮罩图 data URL；没有遮罩时会自动省略该字段。
 
 multipart files 示例：
-- {"field":"image[]","source":"inputImages","array":true}
+- {"field":"image","source":"inputImages","array":true}
 - {"field":"mask","source":"mask"}
 
 ## profiles 元素
@@ -195,7 +202,7 @@ multipart files 示例：
 - name：配置名称，方便用户识别。
 - provider：对应 customProviders 中某个元素的 id。
 - baseUrl：API Base URL。如果文档明确给出，填入完整基础地址；否则留空字符串 ""。
-- model：模型 ID，仅支持 "gpt-image-2" 或 "gpt-image-2-pro"；如果文档给出其他模型，仍使用 "gpt-image-2-pro"。
+- model：模型 ID，仅支持 "gpt-image-2" 或 "gpt-image-2-pro"；如果文档给出其他模型，仍使用 "gpt-image-2"。
 
 profiles 中不要包含 apiKey（用户导入后自行填写）。
 
@@ -208,10 +215,10 @@ profiles 中不要包含 apiKey（用户导入后自行填写）。
 - 如果结果 URL 是数组，路径必须写到数组元素，例如 data.result.images.*.url.*。
 
 ## 同步接口示例
-{"customProviders":[{"id":"custom-example-sync","name":"示例同步服务商","submit":{"path":"images/generations","method":"POST","contentType":"json","body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","quality":"$params.quality","output_format":"$params.output_format","moderation":"$params.moderation","output_compression":"$params.output_compression","n":"$params.n"},"result":{"imageUrlPaths":["data.*.url"],"b64JsonPaths":["data.*.b64_json"]}},"editSubmit":{"path":"images/edits","method":"POST","contentType":"multipart","body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","quality":"$params.quality","output_format":"$params.output_format","moderation":"$params.moderation","output_compression":"$params.output_compression","n":"$params.n"},"files":[{"field":"image[]","source":"inputImages","array":true},{"field":"mask","source":"mask"}],"result":{"imageUrlPaths":["data.*.url"],"b64JsonPaths":["data.*.b64_json"]}}}],"profiles":[{"name":"示例同步服务商","provider":"custom-example-sync","baseUrl":"https://api.example.com/v1","model":"gpt-image-2-pro",}]}
+{"customProviders":[{"id":"custom-example-sync","name":"示例同步服务商","submit":{"path":"images/generations","method":"POST","contentType":"json","body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","quality":"$params.quality","output_format":"$params.output_format","moderation":"$params.moderation","output_compression":"$params.output_compression","n":"$params.n","response_format":"b64_json"},"result":{"imageUrlPaths":["data.*.url"],"b64JsonPaths":["data.*.b64_json"]}},"editSubmit":{"path":"images/edits","method":"POST","contentType":"multipart","body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","quality":"$params.quality","output_format":"$params.output_format","moderation":"$params.moderation","output_compression":"$params.output_compression","n":"$params.n","response_format":"b64_json"},"files":[{"field":"image","source":"inputImages","array":true},{"field":"mask","source":"mask"}],"result":{"imageUrlPaths":["data.*.url"],"b64JsonPaths":["data.*.b64_json"]}}}],"profiles":[{"name":"示例同步服务商","provider":"custom-example-sync","baseUrl":"https://api.example.com/v1","model":"gpt-image-2",}]}
 
 ## 异步接口示例
-{"customProviders":[{"id":"custom-example-async","name":"示例异步服务商","submit":{"path":"images/generations","method":"POST","contentType":"json","query":{"async":"true"},"body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","n":"$params.n"},"taskIdPath":"data"},"editSubmit":{"path":"images/edits","method":"POST","contentType":"multipart","query":{"async":"true"},"body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","n":"$params.n"},"files":[{"field":"image[]","source":"inputImages","array":true}],"taskIdPath":"data"},"poll":{"path":"images/tasks/{task_id}","method":"GET","intervalSeconds":5,"statusPath":"data.status","successValues":["SUCCESS"],"failureValues":["FAILURE"],"errorPath":"data.fail_reason","result":{"imageUrlPaths":["data.data.data.*.url"],"b64JsonPaths":["data.data.data.*.b64_json"]}}}],"profiles":[{"name":"示例异步服务商","provider":"custom-example-async","baseUrl":"","model":"gpt-image-2",}]}
+{"customProviders":[{"id":"custom-example-async","name":"示例异步服务商","submit":{"path":"images/generations","method":"POST","contentType":"json","query":{"async":"true"},"body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","n":"$params.n","response_format":"b64_json"},"taskIdPath":"data"},"editSubmit":{"path":"images/edits","method":"POST","contentType":"multipart","query":{"async":"true"},"body":{"model":"$profile.model","prompt":"$prompt","size":"$params.size","n":"$params.n","response_format":"b64_json"},"files":[{"field":"image","source":"inputImages","array":true}],"taskIdPath":"data"},"poll":{"path":"images/tasks/{task_id}","method":"GET","intervalSeconds":5,"statusPath":"data.status","successValues":["SUCCESS"],"failureValues":["FAILURE"],"errorPath":"data.fail_reason","result":{"imageUrlPaths":["data.data.data.*.url"],"b64JsonPaths":["data.data.data.*.b64_json"]}}}],"profiles":[{"name":"示例异步服务商","provider":"custom-example-async","baseUrl":"","model":"gpt-image-2",}]}
 
 ## 统一任务接口示例
 {"customProviders":[{"id":"custom-example-task","name":"示例任务服务商","submit":{"path":"images/generations","method":"POST","contentType":"json","body":{"model":"$profile.model","prompt":"$prompt","n":"$params.n","size":"$params.size","resolution":"2k","quality":"$params.quality","image_urls":"$inputImages.dataUrls"},"taskIdPath":"data.0.task_id"},"poll":{"path":"tasks/{task_id}","method":"GET","query":{"language":"zh"},"intervalSeconds":5,"statusPath":"data.status","successValues":["completed"],"failureValues":["failed","cancelled"],"errorPath":"data.error.message","result":{"imageUrlPaths":["data.result.images.*.url.*"],"b64JsonPaths":[]}}}],"profiles":[{"name":"示例任务服务商","provider":"custom-example-task","baseUrl":"","model":"gpt-image-2",}]}`
@@ -233,6 +240,7 @@ export default function SettingsModal() {
   const llmPromptTooltipTimerRef = useRef<number | null>(null)
   const settingsScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const customProviderScrollBoundaryRef = useRef<HTMLDivElement>(null)
+  const zipDownloadRouteScrollBoundaryRef = useRef<HTMLDivElement>(null)
   
   const [draft, setDraft] = useState<AppSettings>(normalizeSettings(settings))
   const [timeoutInput, setTimeoutInput] = useState(String(getActiveApiProfile(settings).timeout))
@@ -240,6 +248,7 @@ export default function SettingsModal() {
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
+  const [showZipDownloadRouteManager, setShowZipDownloadRouteManager] = useState(false)
   const [editingCustomProviderId, setEditingCustomProviderId] = useState<string | null>(null)
   const [customProviderForm, setCustomProviderForm] = useState<CustomProviderForm>(createDefaultCustomProviderForm())
   const [customProviderImportError, setCustomProviderImportError] = useState<string | null>(null)
@@ -259,6 +268,10 @@ export default function SettingsModal() {
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const activeModel = normalizeImageModel(activeProfile.model)
+  const enabledZipDownloadRouteCount = ZIP_DOWNLOAD_ROUTE_OPTIONS.filter((option) => draft.zipDownloadRoutes.includes(option.route)).length
+  const zipDownloadRouteSummary = enabledZipDownloadRouteCount
+    ? `已开启 ${enabledZipDownloadRouteCount} 项使用压缩包进行批量下载的途径`
+    : '未开启任何使用压缩包进行批量下载的途径'
   const providerOptions = [
     { label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const },
     { label: 'OpenAI 兼容接口', value: 'openai' },
@@ -370,6 +383,13 @@ export default function SettingsModal() {
     setSettings(normalizedDraft)
   }
 
+  const setZipDownloadRouteEnabled = (route: ZipDownloadRoute, enabled: boolean) => {
+    const nextRoutes = enabled
+      ? Array.from(new Set([...draft.zipDownloadRoutes, route]))
+      : draft.zipDownloadRoutes.filter((item) => item !== route)
+    commitSettings({ ...draft, zipDownloadRoutes: nextRoutes })
+  }
+
   const createProfileImportUrl = (profile: ApiProfile, includeApiKey: boolean) => {
     const url = new URL(window.location.href)
     url.search = ''
@@ -433,6 +453,10 @@ export default function SettingsModal() {
   }
 
   const handleClose = () => {
+    if (showZipDownloadRouteManager) {
+      setShowZipDownloadRouteManager(false)
+      return
+    }
     const nextTimeout = Number(timeoutInput)
     const normalizedTimeout =
       timeoutInput.trim() === '' || Number.isNaN(nextTimeout)
@@ -460,7 +484,7 @@ export default function SettingsModal() {
   }, [draft, activeProfile.id, activeProfile.provider, activeProfile.timeout, timeoutInput])
 
   useCloseOnEscape(showSettings, handleClose)
-  usePreventBackgroundScroll(showSettings, showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
+  usePreventBackgroundScroll(showSettings, showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
 
   if (!showSettings) return null
 
@@ -816,6 +840,59 @@ export default function SettingsModal() {
                     开启后，即使任务成功生成，也会在任务卡片和详情页显示重试按钮。
                   </div>
                 </div>
+                <div className="hidden sm:block">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="block text-sm text-gray-600 dark:text-gray-300">任务提交方式</span>
+                    <div className="w-36">
+                      <Select
+                        value={draft.enterSubmit ? 'enter' : 'ctrl-enter'}
+                        onChange={(val) => commitSettings({ ...draft, enterSubmit: val === 'enter' })}
+                        options={[
+                          { label: navigator.userAgent.includes('Mac') ? '⌘ + Enter' : 'Ctrl + Enter', value: 'ctrl-enter' },
+                          { label: 'Enter', value: 'enter' },
+                        ]}
+                        className="w-full px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                    选择 {navigator.userAgent.includes('Mac') ? '⌘ + Enter' : 'Ctrl + Enter'} 时，Enter 换行；选择 Enter 时，Shift + Enter 换行。
+                  </div>
+                </div>
+                <div className="sm:hidden">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="block text-sm text-gray-600 dark:text-gray-300">任务提交方式</span>
+                    <div className="w-36">
+                      <Select
+                        value={draft.enterSubmit ? 'enter' : 'button'}
+                        onChange={(val) => commitSettings({ ...draft, enterSubmit: val === 'enter' })}
+                        options={[
+                          { label: '发送按钮', value: 'button' },
+                          { label: '回车/发送按钮', value: 'enter' },
+                        ]}
+                        className="w-full px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                    选择回车/发送按钮时，回车可提交；否则仅使用发送按钮提交。
+                  </div>
+                </div>
+                <div className="block">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="block text-sm text-gray-600 dark:text-gray-300">使用压缩包进行的批量下载途径</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowZipDownloadRouteManager(true)}
+                      className="shrink-0 rounded-xl border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 hover:text-gray-900 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-300 dark:hover:bg-white/[0.08] dark:hover:text-white"
+                    >
+                      管理
+                    </button>
+                  </div>
+                  <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                    {zipDownloadRouteSummary}
+                  </div>
+                </div>
               </div>
             )}
             
@@ -853,7 +930,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后应用 Codex CLI 实际支持的参数。支持查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>。
+                    开启后应用 Codex CLI 实际支持的参数。
                   </div>
                 </div>
               )}
@@ -911,9 +988,6 @@ export default function SettingsModal() {
                     )}
                   </button>
                 </div>
-                <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
-                </div>
               </div>
 
               <label className="block">
@@ -935,9 +1009,6 @@ export default function SettingsModal() {
                     <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
                   ) : (
                     <>Images API 需要使用 GPT Image 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。</>
-                  )}
-                  {activeProfile.provider === 'openai' && (
-                    <>支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>
                   )}
                 </div>
               </label>
@@ -1091,6 +1162,84 @@ export default function SettingsModal() {
         </div>
       </div>
       </div>
+
+        {showZipDownloadRouteManager && createPortal(
+          <div
+            data-no-drag-select
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+            onClick={() => setShowZipDownloadRouteManager(false)}
+          >
+            <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
+            <div
+              className="relative z-10 w-full max-w-md rounded-3xl bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] ring-1 ring-black/5 dark:ring-white/10 animate-confirm-in flex flex-col max-h-[85vh] sm:max-h-[90vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="shrink-0 p-6 pb-2">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <h3 className="text-base font-bold text-gray-800 dark:text-gray-100">使用压缩包进行批量下载</h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowZipDownloadRouteManager(false)}
+                    className="shrink-0 rounded-full p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                    aria-label="关闭"
+                  >
+                    <CloseIcon className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div data-selectable-text className="text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+                  开启后，对应批量下载会生成一个 ZIP，而不是逐个下载图片文件。
+                </div>
+              </div>
+
+              <div ref={zipDownloadRouteScrollBoundaryRef} className="flex-1 overflow-y-auto px-6 space-y-3 custom-scrollbar min-h-0 py-2">
+                {ZIP_DOWNLOAD_ROUTE_OPTIONS.map((option) => {
+                  const isChecked = draft.zipDownloadRoutes.includes(option.route)
+                  return (
+                    <button
+                      key={option.route}
+                      type="button"
+                      onClick={() => setZipDownloadRouteEnabled(option.route, !isChecked)}
+                      className={`w-full rounded-2xl border p-3.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
+                        isChecked
+                          ? 'border-blue-500/30 bg-blue-50/50 dark:border-blue-400/30 dark:bg-blue-500/[0.05]'
+                          : 'border-gray-100 bg-gray-50/70 hover:bg-gray-100/70 dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:bg-white/[0.05]'
+                      }`}
+                      aria-pressed={isChecked}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`inline-flex h-4 w-4 items-center justify-center rounded border ${
+                          isChecked ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-300 dark:border-white/20'
+                        }`}>
+                          {isChecked && (
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </span>
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{option.label}</span>
+                      </span>
+                      <span data-selectable-text className="mt-1.5 block pl-6 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                        {option.description}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div className="shrink-0 p-6 pt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowZipDownloadRouteManager(false)}
+                  className="flex-1 rounded-lg bg-blue-500 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
+                >
+                  完成
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
         {showCustomProviderImport && createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">

@@ -92,7 +92,6 @@ export interface AppSettings {
 
 export interface TaskParams {
   size: string
-  aspectRatio?: string | null
   quality: 'auto' | 'low' | 'medium' | 'high'
   output_format: 'png' | 'jpeg' | 'webp'
   output_compression: number | null
@@ -102,7 +101,6 @@ export interface TaskParams {
 
 export const DEFAULT_PARAMS: TaskParams = {
   size: 'auto',
-  aspectRatio: null,
   quality: 'auto',
   output_format: 'png',
   output_compression: null,

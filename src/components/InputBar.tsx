@@ -1411,7 +1411,7 @@ export default function InputBar() {
       {showSizePicker && (
         <SizePickerModal
           currentSize={isFalTextToImage && params.size === 'auto' ? DEFAULT_FAL_IMAGE_SIZE : params.size}
-          onSelect={(size, aspectRatio) => setParams({ size, aspectRatio })}
+          onSelect={(size) => setParams({ size })}
           onClose={() => setShowSizePicker(false)}
           allowAuto={!isFalTextToImage}
         />

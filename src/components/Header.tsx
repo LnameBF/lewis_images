@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useStore } from '../store'
 import HelpModal from './HelpModal'
+import AnnouncementBoardModal from './AnnouncementBoardModal'
 
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const [showHelp, setShowHelp] = useState(false)
+  const [showAnnouncements, setShowAnnouncements] = useState(false)
 
   return (
     <>
@@ -24,6 +26,13 @@ export default function Header() {
             </h1>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowAnnouncements(true)}
+              className="h-9 rounded-lg px-3 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-100"
+              title="公告"
+            >
+              公告
+            </button>
             <button
               onClick={() => setShowHelp(true)}
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
@@ -74,6 +83,7 @@ export default function Header() {
       <div className="safe-area-top invisible pointer-events-none" aria-hidden="true">
         <div className="safe-header-inner" />
       </div>
+      {showAnnouncements && <AnnouncementBoardModal onClose={() => setShowAnnouncements(false)} />}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </>
   )

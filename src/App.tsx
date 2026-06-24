@@ -5,6 +5,7 @@ import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams 
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
+import AnnouncementModal from './components/AnnouncementModal'
 import TaskGrid from './components/TaskGrid'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
@@ -63,6 +64,7 @@ export default function App() {
       <Lightbox />
       <SettingsModal />
       <ConfirmDialog />
+      <AnnouncementModal />
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />

@@ -1,7 +1,7 @@
 {
-  "name": "CCTQ Image",
-  "short_name": "CCTQ",
-  "description": "CCTQ Image 图像生成工作台",
+  "name": "lewis Image",
+  "short_name": "lewis",
+  "description": "lewis Image 图像生成工作台",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

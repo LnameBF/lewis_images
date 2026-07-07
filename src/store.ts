@@ -538,7 +538,7 @@ export const useStore = create<AppState>()(
       setConfirmDialog: (confirmDialog) => set({ confirmDialog }),
     }),
     {
-      name: 'cctq-image',
+      name: 'lewis-image',
       partialize: getPersistedState,
       merge: mergePersistedState,
       onRehydrateStorage: () => (state) => {
@@ -1620,7 +1620,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `cctq-image-${formatExportFileTime(new Date(exportedAt))}.zip`
+    a.download = `lewis-image-${formatExportFileTime(new Date(exportedAt))}.zip`
     a.click()
     URL.revokeObjectURL(url)
     useStore.getState().showToast('数据已导出', 'success')

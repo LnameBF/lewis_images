@@ -1,3 +1,11 @@
+/*
+ * @Description: 
+ * @Author: ljw
+ * @Email: 3198354433@qq.com
+ * @Date: 2026-07-07 11:35:56
+ * @LastEditTime: 2026-07-07 11:58:33
+ * @LastEditors: ljw
+ */
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
@@ -118,12 +126,12 @@ export default function HelpModal({ onClose }: HelpModalProps) {
 
         <div className="pt-4 border-t border-gray-200 dark:border-white/[0.08] flex justify-center">
           <a
-            href="https://www.cctq.ai"
+            href="http://43.136.172.91:8007"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors group"
           >
-            CCTQ
+            lewis
           </a>
         </div>
       </div>

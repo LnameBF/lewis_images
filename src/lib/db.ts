@@ -1,6 +1,6 @@
 import type { TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
-const DB_NAME = 'cctq-image'
+const DB_NAME = 'lewis-image'
 const DB_VERSION = 2
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'

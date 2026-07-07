@@ -15,13 +15,13 @@ export default function Header() {
           <div className="flex items-start gap-1">
             <h1 className="text-lg font-bold tracking-tight">
               <a
-                href="https://www.cctq.ai"
+                href="http://43.136.172.91:8007"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors flex items-center gap-1.5"
               >
                 <img src="logo.gif" alt="logo" className="h-6 w-6 rounded" />
-                CCTQ Image
+                lewis Image
               </a>
             </h1>
           </div>

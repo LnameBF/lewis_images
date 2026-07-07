@@ -14,7 +14,7 @@ import type {
 import { DEFAULT_ZIP_DOWNLOAD_ROUTES, ZIP_DOWNLOAD_ROUTE_VALUES } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
 
-const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'https://www.cctq.ai/v1'
+const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'http://43.136.172.91:8007'
 export const IMAGE_MODEL_OPTIONS = ['gpt-image-2', 'gpt-image-2-pro'] as const
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'

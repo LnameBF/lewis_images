@@ -17,8 +17,8 @@ function loadDevProxyConfig() {
   }
 }
 
-export default defineConfig(({ command }) => {
-  const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
+export default defineConfig(({ command, mode }) => {
+  const devProxyConfig = command === 'serve' && mode !== 'test' ? loadDevProxyConfig() : null
 
   return {
     plugins: [react()],
@@ -29,8 +29,18 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: true,
-      proxy:
-        devProxyConfig?.enabled
+      proxy: {
+        // 静态兜底代理：把 /api-proxy 转发到远程开发服务器，规避浏览器跨域。
+        // 前端需开启「API 代理」开关（见 SettingsModal），请求才会走 /api-proxy 前缀。
+        // rewrite 同时去掉 /api-proxy 与前导 /v1，最终请求为 http://43.136.172.91:8007/<原始路径>
+        '/api-proxy': {
+          target: 'http://43.136.172.91:8007',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/api-proxy/, '').replace(/^\/v1/, ''),
+        },
+        // 若 dev-proxy.config.json 启用且前缀不同，则额外叠加其代理规则
+        ...(devProxyConfig?.enabled && devProxyConfig.prefix !== '/api-proxy'
           ? {
               [devProxyConfig.prefix]: {
                 target: devProxyConfig.target,
@@ -43,7 +53,8 @@ export default defineConfig(({ command }) => {
                   ),
               },
             }
-          : undefined,
+          : {}),
+      },
     },
   }
 })

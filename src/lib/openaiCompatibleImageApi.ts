@@ -198,7 +198,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = profile.apiProxy && isApiProxyAvailable(proxyConfig)
+  const useApiProxy = isApiProxyAvailable(proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
   const paths = createOpenAICompatiblePaths(customProvider)
 
@@ -460,6 +460,7 @@ async function submitCustomRequest(
   mime: string,
 ): Promise<CustomSubmitResponse> {
   const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = isApiProxyAvailable(proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
   const context = createCustomProviderContext(opts, profile)
   const method = mapping.method ?? 'POST'
@@ -485,7 +486,7 @@ async function submitCustomRequest(
     }
   }
 
-  const response = await fetch(buildApiUrl(profile.baseUrl, path, proxyConfig, false), {
+  const response = await fetch(buildApiUrl(profile.baseUrl, path, proxyConfig, useApiProxy), {
     method,
     headers,
     cache: 'no-store',
@@ -505,6 +506,7 @@ async function pollCustomTaskResult(
   signal?: AbortSignal,
 ): Promise<CallApiResult> {
   const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = isApiProxyAvailable(proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
   let isFirstPoll = true
 
@@ -520,7 +522,7 @@ async function pollCustomTaskResult(
     const taskPath = appendQuery(buildTaskPath(poll.path, taskId), poll.query)
     let taskPayload: unknown
     try {
-      const taskResponse = await fetch(buildApiUrl(profile.baseUrl, taskPath, proxyConfig, false), {
+      const taskResponse = await fetch(buildApiUrl(profile.baseUrl, taskPath, proxyConfig, useApiProxy), {
         method: poll.method ?? 'GET',
         headers: requestHeaders,
         cache: 'no-store',

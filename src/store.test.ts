@@ -178,7 +178,7 @@ describe('reused task API profile', () => {
     id: 'custom-profile',
     name: '自定义配置',
     provider: customProvider.id,
-    baseUrl: 'http://43.136.172.91:8007',
+    baseUrl: 'https://bit.heiok.top:18081',
     apiKey: 'custom-key',
     model: 'custom-model',
     timeout: 600,

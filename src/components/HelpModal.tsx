@@ -126,7 +126,7 @@ export default function HelpModal({ onClose }: HelpModalProps) {
 
         <div className="pt-4 border-t border-gray-200 dark:border-white/[0.08] flex justify-center">
           <a
-            href="https://bit.heiok.top:18081"
+            href="https://gost.heiok.top"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors group"

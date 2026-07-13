@@ -32,9 +32,9 @@ export default defineConfig(({ command, mode }) => {
       proxy: {
         // 静态兜底代理：把 /api-proxy 转发到远程开发服务器，规避浏览器跨域。
         // 前端需开启「API 代理」开关（见 SettingsModal），请求才会走 /api-proxy 前缀。
-        // rewrite 同时去掉 /api-proxy 与前导 /v1，最终请求为 http://https://frp.heiok.top:30553/<原始路径>
+        // rewrite 同时去掉 /api-proxy 与前导 /v1，最终请求为 http://http://1.14.75.7:41446/<原始路径>
         '/api-proxy': {
-          target: 'https://frp.heiok.top:30553',
+          target: 'http://1.14.75.7:41446',
           changeOrigin: true,
           secure: false,
           rewrite: (path) => path.replace(/^\/api-proxy/, '').replace(/^\/v1/, ''),

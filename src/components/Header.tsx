@@ -15,7 +15,7 @@ export default function Header() {
           <div className="flex items-start gap-1">
             <h1 className="text-lg font-bold tracking-tight">
               <a
-                href="https://gost.heiok.top"
+                href="https://frp.heiok.top:30553"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors flex items-center gap-1.5"
